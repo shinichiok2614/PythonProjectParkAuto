@@ -54,3 +54,95 @@ Tách bạch chức năng: GUI riêng, model riêng, nhận diện riêng → d�
 Dễ mở rộng: Sau này thêm module AI hoặc quản lý thẻ từ, camera, báo cáo nâng cao.
 
 Tái sử dụng: Model CRUD và database có thể dùng lại cho GUI hoặc nhận diện.
+
+pip install pillow
+pip install opencv-python==4.12.0.88
+pip install ultralytics
+pip install onnxruntime
+pip install deep-sort-realtime
+pip install fast-plate-ocr[onnx]
+
+Bạn đang gặp xung đột phụ thuộc giữa:
+
+❌ fast-plate-ocr → yêu cầu opencv-python-headless
+❌ opencv-python (GUI) → mới cài → cần numpy >= 2
+❌ môi trường bạn đang dùng → numpy 1.26.4
+
+==> Đây là lý do gây lỗi imshow / waitKey
+
+✅ Giải pháp đúng: TÁCH 2 MÔI TRƯỜNG
+
+Không thể vừa dùng fast-plate-ocr (headless) vừa dùng OpenCV GUI trong cùng 1 venv → luôn xung đột.
+
+👉 Bạn chọn 1 trong 2 cách:
+🟩 CÁCH 1 – Dùng OpenCV GUI + Tự OCR biển số (không dùng fast-plate-ocr)
+
+→ làm bãi xe thì tốt nhất dùng YOLO + PaddleOCR hoặc EasyOCR
+→ KHÔNG phụ thuộc opencv-headless
+
+Fix như sau:
+
+1. Gỡ hết OpenCV & fast-plate-ocr
+pip uninstall -y opencv-python-headless
+pip uninstall -y fast-plate-ocr
+pip uninstall -y opencv-python
+pip uninstall -y opencv-contrib-python
+
+2. Cài lại OpenCV GUI đúng phiên bản
+pip install opencv-python==4.8.0.76
+pip install opencv-contrib-python==4.8.0.76
+
+3. Cài OCR thay thế:
+pip install paddleocr
+
+
+hoặc:
+
+pip install easyocr
+
+
+➡️ Đây là cách tốt nhất cho ứng dụng bãi xe real-time.
+
+🟦 CÁCH 2 – Giữ fast-plate-ocr nhưng KHÔNG dùng imshow()
+
+fast-plate-ocr bắt buộc phải dùng opencv-headless → bạn không thể dùng GUI của OpenCV.
+
+Nên phải bỏ cv2.imshow() và dùng GUI loại khác:
+✔ Tkinter Canvas
+✔ PyQt5 QLabel
+✔ Pygame
+✔ Custom window (fastest)
+
+Fix đơn giản nhất: dùng Tkinter hiển thị:
+
+from PIL import Image, ImageTk
+
+img = ImageTk.PhotoImage(Image.fromarray(frame))
+label.configure(image=img)
+label.image = img
+
+
+➡️ Không cần OpenCV GUI → không lỗi waitKey
+
+🟥 Nếu bạn muốn giữ cả 2 (GUI + fast-plate-ocr)?
+
+Không được vì:
+
+fast-plate-ocr requires opencv-python-headless
+opencv-python GUI conflicts with opencv-python-headless
+
+
+Hai thằng này không thể cùng tồn tại trong 1 môi trường.
+
+📌 Tóm tắt hướng giải quyết
+Mục đích	Cài gì	Không cài gì
+Real-time camera + GUI	opencv-python + paddleocr	fast-plate-ocr, headless
+Chạy headless server OCR	fast-plate-ocr + opencv-python-headless	imshow, waitKey
+🔥 Tôi đề xuất cho ứng dụng bãi xe:
+✔ YOLO + DeepSORT
+✔ OCR = PaddleOCR
+✔ OpenCV GUI = OK
+
+→ Chạy mượt, không xung đột, chính xác cao.
+
+Nếu bạn muốn tôi chỉnh lại code cam_baiXe.py theo hướng không dùng fast-plate-ocr, bạn chỉ cần gửi file, tôi sẽ sửa gọn – chạy ổn định 100%.
