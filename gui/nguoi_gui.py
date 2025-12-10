@@ -60,7 +60,8 @@ class NguoiGUI:
     def load_donvi(self):
         all_units = donvi.DonVi.get_all()
         self.donvi_list = all_units  # (id, ten, cap, parent_id)
-        self.cb_donvi['values'] = [f"{x[1]} (C{x[2]})" for x in all_units]
+        # Hiển thị đầy đủ phân cấp
+        self.cb_donvi['values'] = [self.get_donvi_fullname(x) for x in all_units]
 
     # --- Load danh sách người ---
     def load_nguoi(self):
@@ -80,7 +81,8 @@ class NguoiGUI:
             self.entry_anh.insert(0, item['values'][2])
             # Chọn đơn vị trong Combobox
             for idx, dv in enumerate(self.donvi_list):
-                if dv[1] == item['values'][3]:  # so sánh tên đơn vị
+                fullname = self.get_donvi_fullname(dv)
+                if fullname == item['values'][3]:  # so sánh tên đầy đủ
                     self.cb_donvi.current(idx)
                     break
 
@@ -122,3 +124,24 @@ class NguoiGUI:
         nguoi_id = self.tree.item(selected[0])['values'][0]
         nguoi.Nguoi.delete(nguoi_id)
         self.load_nguoi()
+
+    # Lấy tên đầy đủ phân cấp của 1 DonVi
+    def get_donvi_fullname(self, donvi_row):
+        """
+        donvi_row = (id, ten, cap, parent_id)
+        Trả về chuỗi: Cấp 1 - Cấp 2 - Cấp 3 - Cấp 4
+        """
+        names = [f"{donvi_row[1]} (C{donvi_row[2]})"]
+        parent_id = donvi_row[3]
+        while parent_id:
+            conn = donvi.get_conn()
+            c = conn.cursor()
+            c.execute("SELECT id, ten, cap, parent_id FROM DonVi WHERE id=?", (parent_id,))
+            parent = c.fetchone()
+            conn.close()
+            if parent:
+                names.insert(0, f"{parent[1]} (C{parent[2]})")
+                parent_id = parent[3]
+            else:
+                break
+        return " - ".join(names)
