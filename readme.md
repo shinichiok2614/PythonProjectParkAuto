@@ -146,3 +146,57 @@ Chạy headless server OCR	fast-plate-ocr + opencv-python-headless	imshow, waitK
 → Chạy mượt, không xung đột, chính xác cao.
 
 Nếu bạn muốn tôi chỉnh lại code cam_baiXe.py theo hướng không dùng fast-plate-ocr, bạn chỉ cần gửi file, tôi sẽ sửa gọn – chạy ổn định 100%.
+
+Giải thích 3 dòng này:
+
+car_frame = tk.Frame(preview_frame, width=CAR_W, height=CAR_H)
+car_frame.pack(side=tk.LEFT, padx=2, pady=2)
+car_frame.pack_propagate(False)
+
+✅ 1. car_frame = tk.Frame(preview_frame, width=CAR_W, height=CAR_H)
+
+Tạo một frame con nằm trong preview_frame, đồng thời đặt kích thước cố định:
+
+width = CAR_W → chiều rộng khung hiển thị xe
+
+height = CAR_H → chiều cao khung hiển thị xe
+
+Frame mặc định không cố định kích thước, nó sẽ co giãn theo widget con, nhưng bước 3 sẽ xử lý.
+
+✅ 2. car_frame.pack(side=tk.LEFT, padx=2, pady=2)
+
+Đặt frame nằm bên trái trong bố cục ngang
+
+Chừa khoảng cách 2px ở trái/phải/trên/dưới
+
+✅ 3. car_frame.pack_propagate(False)
+
+Đây là dòng cực kỳ quan trọng.
+
+Tkinter có cơ chế geometry propagation:
+
+👉 Mặc định Frame sẽ tự co lại đúng bằng kích thước widget con của nó.
+→ Tức là nếu bạn nhét ảnh 100×50 vào, frame cũng tự động thu về 100×50.
+
+Điều này khiến việc cố định khung preview hoàn toàn thất bại.
+
+🔥 pack_propagate(False) = KHÓA kích thước Frame
+
+Khi bạn đặt:
+
+car_frame.pack_propagate(False)
+
+
+=> Tkinter không được phép thay đổi kích thước frame, dù ở trong có ảnh to hay nhỏ.
+
+→ Frame sẽ giữ đúng kích thước CAR_W × CAR_H.
+
+→ Đây là điều bắt buộc để video/ảnh scale đúng vào khung mà bạn muốn.
+
+🎯 Kết quả sau 3 dòng lệnh:
+
+Frame có kích thước cố định, không bị thay đổi
+
+Ảnh/video bạn đưa vào sẽ được resize theo đúng khung
+
+GUI preview luôn đẹp, bố cục luôn ổn định
