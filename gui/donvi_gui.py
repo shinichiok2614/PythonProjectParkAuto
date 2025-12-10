@@ -9,7 +9,7 @@ class DonViGUI:
         self.frame.pack(fill="both", expand=True)
 
         self.create_widgets()
-        self.load_donvi1()
+        self.load_tree()
 
     def create_widgets(self):
         frm_form = tk.Frame(self.frame)
@@ -22,7 +22,7 @@ class DonViGUI:
 
         # Cấp đơn vị
         tk.Label(frm_form, text="Cấp:").grid(row=1, column=0, sticky="w")
-        self.cb_cap = ttk.Combobox(frm_form, state="readonly", values=[1, 2, 3])
+        self.cb_cap = ttk.Combobox(frm_form, state="readonly", values=[1, 2, 3, 4])
         self.cb_cap.grid(row=1, column=1)
         self.cb_cap.current(0)
         self.cb_cap.bind("<<ComboboxSelected>>", self.on_cap_selected)
@@ -39,7 +39,7 @@ class DonViGUI:
         tk.Button(frm_buttons, text="Sửa", command=self.update_donvi).pack(side="left", padx=5)
         tk.Button(frm_buttons, text="Xóa", command=self.delete_donvi).pack(side="left", padx=5)
 
-        # Treeview
+        # Treeview hiển thị DonVi
         self.tree = ttk.Treeview(self.frame, columns=("id", "ten", "cap", "parent"), show="headings")
         self.tree.heading("id", text="ID")
         self.tree.heading("ten", text="Tên")
@@ -48,6 +48,7 @@ class DonViGUI:
         self.tree.pack(padx=10, pady=10, fill="both", expand=True)
         self.tree.bind("<<TreeviewSelect>>", self.on_tree_select)
 
+    # Load danh sách cấp trên khi chọn cấp
     def on_cap_selected(self, event):
         cap = int(self.cb_cap.get())
         if cap == 1:
@@ -63,41 +64,19 @@ class DonViGUI:
             else:
                 self.cb_parent.set("")
 
-    def load_donvi1(self):
-        self.load_tree()
-
+    # Load toàn bộ treeview
     def load_tree(self):
         for i in self.tree.get_children():
             self.tree.delete(i)
-        # Lấy tất cả đơn vị
-        units = []
-        for cap in [1, 2, 3]:
-            units.extend(donvi.DonVi.get_by_cap(cap))
+        units = donvi.DonVi.get_all()
         for u in units:
-            # Lấy tên parent nếu có
-            parent_name = ""
-            if u[0]:
-                parent_id = self.get_parent_id(u[0])
-                if parent_id:
-                    parent_name = self.get_donvi_name(parent_id)
-            self.tree.insert("", "end", values=(u[0], u[1], self.get_cap(u[0]), parent_name))
+            parent_name = self.get_donvi_name(u[3]) if u[3] else ""
+            self.tree.insert("", "end", values=(u[0], u[1], u[2], parent_name))
 
-    def get_cap(self, id):
-        for cap in [1,2,3]:
-            lst = donvi.DonVi.get_by_cap(cap)
-            if any(x[0]==id for x in lst):
-                return cap
-        return None
-
-    def get_parent_id(self, id):
-        conn = donvi.get_conn()
-        c = conn.cursor()
-        c.execute("SELECT parent_id FROM DonVi WHERE id=?", (id,))
-        result = c.fetchone()
-        conn.close()
-        return result[0] if result else None
-
+    # Lấy tên DonVi theo id
     def get_donvi_name(self, id):
+        if not id:
+            return ""
         conn = donvi.get_conn()
         c = conn.cursor()
         c.execute("SELECT ten FROM DonVi WHERE id=?", (id,))
@@ -105,6 +84,7 @@ class DonViGUI:
         conn.close()
         return result[0] if result else ""
 
+    # Khi chọn 1 đơn vị trên treeview
     def on_tree_select(self, event):
         selected = self.tree.selection()
         if selected:
@@ -112,13 +92,10 @@ class DonViGUI:
             self.entry_ten.delete(0, tk.END)
             self.entry_ten.insert(0, item['values'][1])
             self.cb_cap.set(item['values'][2])
-            # Chọn parent nếu có
-            parent_name = item['values'][3]
-            if parent_name:
-                self.cb_parent.set(parent_name)
-            else:
-                self.cb_parent.set("")
+            self.on_cap_selected(None)  # Load cấp trên
+            self.cb_parent.set(item['values'][3])
 
+    # Thêm đơn vị
     def add_donvi(self):
         ten = self.entry_ten.get()
         cap = int(self.cb_cap.get())
@@ -133,6 +110,7 @@ class DonViGUI:
         donvi.DonVi.add(ten, cap, parent_id)
         self.load_tree()
 
+    # Sửa đơn vị
     def update_donvi(self):
         selected = self.tree.selection()
         if not selected:
@@ -143,6 +121,7 @@ class DonViGUI:
         donvi.DonVi.update(id, ten)
         self.load_tree()
 
+    # Xóa đơn vị
     def delete_donvi(self):
         selected = self.tree.selection()
         if not selected:

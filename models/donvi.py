@@ -36,3 +36,12 @@ class DonVi:
         result = c.fetchall()
         conn.close()
         return result
+
+    @staticmethod
+    def get_all():
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("SELECT id, ten, cap, parent_id FROM DonVi ORDER BY cap, id")
+        result = c.fetchall()
+        conn.close()
+        return result
