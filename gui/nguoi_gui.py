@@ -59,9 +59,9 @@ class NguoiGUI:
     # --- Load tất cả đơn vị (bất kỳ cấp) ---
     def load_donvi(self):
         all_units = donvi.DonVi.get_all()
-        self.donvi_list = all_units  # (id, ten, cap, parent_id)
-        # Hiển thị đầy đủ phân cấp
+        self.donvi_list = all_units
         self.cb_donvi['values'] = [self.get_donvi_fullname(x) for x in all_units]
+        self.adjust_combobox_width()  # Chỉnh width dựa trên dữ liệu
 
     # --- Load danh sách người ---
     def load_nguoi(self):
@@ -145,3 +145,10 @@ class NguoiGUI:
             else:
                 break
         return " - ".join(names)
+
+    def adjust_combobox_width(self):
+        # Tính độ dài tối đa của các giá trị
+        if hasattr(self, 'cb_donvi') and self.donvi_list:
+            max_len = max(len(self.get_donvi_fullname(x)) for x in self.donvi_list)
+            # Set width của Combobox (khoảng 1 ký tự = 1 đơn vị width)
+            self.cb_donvi.config(width=max_len + 2)  # +2 cho dư
