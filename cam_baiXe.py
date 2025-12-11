@@ -4,7 +4,6 @@ import queue
 import threading
 import sqlite3
 import numpy as np
-import time
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
 from datetime import datetime
@@ -29,7 +28,7 @@ os.makedirs(SAVED_CARS, exist_ok=True)
 os.makedirs(SAVED_PLATES, exist_ok=True)
 os.makedirs(SAVED_FACES, exist_ok=True)
 
-# Load models (may be slow)
+# Load models
 vehicle_model = YOLO(VEHICLE_MODEL_PATH)
 plate_model = YOLO(PLATE_MODEL_PATH)
 ocr = LicensePlateRecognizer(OCR_MODEL_NAME)
@@ -37,13 +36,6 @@ tracker = DeepSort(max_age=30, n_init=3, nn_budget=100)
 
 # Thread-safe queue
 result_queue = queue.Queue()
-
-# ---------------------------
-# Preview sizes (fixed)
-# ---------------------------
-CAR_W, CAR_H = 500, 300
-PLATE_W, PLATE_H = 250, 150
-FACE_W, FACE_H = 200, 250
 
 # ---------------------------
 # Utils
@@ -65,71 +57,17 @@ def centroid(box):
     x1, y1, x2, y2 = box
     return ((x1+x2)/2, (y1+y2)/2)
 
-def ensure_db_tables(db_path=DB_PATH):
-    db = sqlite3.connect(db_path)
-    c = db.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS plate_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            car_id INTEGER,
-            plate TEXT,
-            car_path TEXT,
-            plate_path TEXT,
-            face_path TEXT,
-            timestamp TEXT
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS parking_status (
-            car_id INTEGER PRIMARY KEY,
-            plate TEXT,
-            ts_in TEXT
-        )
-    """)
-    db.commit()
-    db.close()
-
-def fit_image_to_canvas_bgr(img_bgr, canvas_w, canvas_h, background=(255,255,255)):
-    """
-    Resize img_bgr to fit into (canvas_w, canvas_h) keeping aspect ratio.
-    Returns RGB numpy array shaped (canvas_h, canvas_w, 3).
-    """
-    if img_bgr is None:
-        # return blank canvas
-        canvas = np.ones((canvas_h, canvas_w, 3), dtype=np.uint8)
-        canvas[:] = background
-        return cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
-
-    h, w = img_bgr.shape[:2]
-    if h == 0 or w == 0:
-        canvas = np.ones((canvas_h, canvas_w, 3), dtype=np.uint8)
-        canvas[:] = background
-        return cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
-
-    scale = min(canvas_w / w, canvas_h / h)
-    new_w = max(1, int(w * scale))
-    new_h = max(1, int(h * scale))
-    resized = cv2.resize(img_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
-
-    canvas = np.ones((canvas_h, canvas_w, 3), dtype=np.uint8)
-    canvas[:] = background
-    x = (canvas_w - new_w) // 2
-    y = (canvas_h - new_h) // 2
-    canvas[y:y+new_h, x:x+new_w] = resized
-    # convert to RGB for PIL
-    return cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
-
 # ---------------------------
-# GUI + App
+# GUI
 # ---------------------------
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("Vehicle + Plate OCR + Parking Tracking")
-        root.geometry("1400x780")
+        root.title("Vehicle + Plate OCR")
+        root.geometry("1400x700")
 
         # ---------------- Left frame ----------------
-        left_frame = tk.Frame(root, width=420)
+        left_frame = tk.Frame(root, width=400)
         left_frame.pack(side=tk.LEFT, fill=tk.Y)
 
         # Buttons
@@ -140,79 +78,51 @@ class App:
         self.btn_stop = tk.Button(btn_frame, text="Dừng", command=self.stop_video, state=tk.DISABLED)
         self.btn_stop.pack(side=tk.LEFT, padx=6)
 
-        # --- History Treeview (plate_logs) ---
-        tk.Label(left_frame, text="Lịch sử phát hiện (unique plates)").pack(anchor="w", padx=6)
+        # Treeview
         columns = ("car_id", "plate", "time")
-        self.tree = ttk.Treeview(left_frame, columns=columns, show="headings", height=10)
+        self.tree = ttk.Treeview(left_frame, columns=columns, show="headings", height=40)
         self.tree.heading("car_id", text="Car ID")
         self.tree.heading("plate", text="Plate")
         self.tree.heading("time", text="Time")
-        self.tree.column("car_id", width=60)
+        self.tree.column("car_id", width=70)
         self.tree.column("plate", width=120)
         self.tree.column("time", width=140)
-        self.tree.pack(fill=tk.X, expand=False, pady=6)
+        self.tree.pack(fill=tk.Y, expand=True, pady=6)
         self.tree.bind("<<TreeviewSelect>>", self.on_row_selected)
         self.tree.tag_configure('new_car', background='lightgreen')
         self.tree.tag_configure('left_car', background='lightcoral')
 
-        # --- Real-time Parking Treeview (current in parking) ---
-        tk.Label(left_frame, text="Xe đang trong bãi (real-time)").pack(anchor="w", padx=6, pady=(10,0))
-        bai_cols = ("car_id", "plate", "time_in")
-        self.tree_bai = ttk.Treeview(left_frame, columns=bai_cols, show="headings", height=14)
-        self.tree_bai.heading("car_id", text="Car ID")
-        self.tree_bai.heading("plate", text="Plate")
-        self.tree_bai.heading("time_in", text="Time In")
-        self.tree_bai.column("car_id", width=60)
-        self.tree_bai.column("plate", width=130)
-        self.tree_bai.column("time_in", width=140)
-        self.tree_bai.pack(fill=tk.Y, expand=True, pady=6)
-        self.tree_bai.bind("<<TreeviewSelect>>", self.on_row_selected_bai)
+        # ---------------- Right frame với PanedWindow ----------------
+        right_pane = tk.PanedWindow(root, orient=tk.VERTICAL)
+        right_pane.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # ---------------- Right frame ----------------
-        right_frame = tk.Frame(root)
-        right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # Video display trên, mặc định cao 400px
+        self.video_frame = tk.Label(right_pane, text="Video")
+        right_pane.add(self.video_frame, minsize=400)  # minsize = chiều cao ban đầu
 
-        preview_frame = tk.Frame(right_frame)
-        preview_frame.pack(fill=tk.BOTH, expand=True)
+        # Khung preview dưới (PanedWindow ngang)
+        preview_pane = tk.PanedWindow(right_pane, orient=tk.HORIZONTAL)
+        right_pane.add(preview_pane, minsize=200)  # chiều cao ban đầu của preview
 
-        # --- CAR PREVIEW ---
-        car_frame = tk.Frame(preview_frame, width=CAR_W, height=CAR_H)
-        car_frame.pack(side=tk.LEFT, padx=2, pady=2)
-        car_frame.pack_propagate(False)
+        self.preview_car = tk.Label(preview_pane, text="Car image", relief=tk.SUNKEN)
+        self.preview_plate = tk.Label(preview_pane, text="Plate image", relief=tk.SUNKEN)
+        self.preview_face = tk.Label(preview_pane, text="Face image", relief=tk.SUNKEN)
 
-        self.preview_car = tk.Label(car_frame, text="Car image", relief=tk.SUNKEN)
-        self.preview_car.pack(fill=tk.BOTH, expand=True)
-
-        # --- PLATE PREVIEW ---
-        plate_frame = tk.Frame(preview_frame, width=PLATE_W, height=PLATE_H)
-        plate_frame.pack(side=tk.LEFT, padx=2, pady=2)
-        plate_frame.pack_propagate(False)
-
-        self.preview_plate = tk.Label(plate_frame, text="Plate image", relief=tk.SUNKEN)
-        self.preview_plate.pack(fill=tk.BOTH, expand=True)
-
-        # --- FACE PREVIEW ---
-        face_frame = tk.Frame(preview_frame, width=FACE_W, height=FACE_H)
-        face_frame.pack(side=tk.LEFT, padx=2, pady=2)
-        face_frame.pack_propagate(False)
-
-        self.preview_face = tk.Label(face_frame, text="Face image", relief=tk.SUNKEN)
-        self.preview_face.pack(fill=tk.BOTH, expand=True)
+        # Thêm các preview, đặt minsize = chiều rộng ban đầu
+        preview_pane.add(self.preview_car, minsize=400)
+        preview_pane.add(self.preview_plate, minsize=300)
+        preview_pane.add(self.preview_face, minsize=200)
 
         # ---------------- Internal state ----------------
         self.video_thread = None
         self.running = False
         self.cap = None
         self.current_video_path = None
-        self.latest_entries = []   # last frame entries (from OCR)
-        self.latest_tracked_ids = set()  # set of currently tracked ids (from last frame)
-        self.car_states = {}       # for history Treeview (id->state)
-        self.bai_states = {}       # real-time parking: car_id -> ts_in
-
-        ensure_db_tables()  # create tables if not exist
+        self.latest_entries = []
+        self.car_states = {}
 
         # Poll queue
-        self.root.after(100, self.process_queue)
+        self.root.after(200, self.process_queue)
 
     # ---------------- Video controls ----------------
     def select_and_start(self):
@@ -248,152 +158,35 @@ class App:
         self.btn_open.config(state=tk.NORMAL)
         self.btn_stop.config(state=tk.DISABLED)
 
-    # ---------------- Queue processing & Treeview updates (main thread) ----------------
+    # ---------------- Treeview update ----------------
     def process_queue(self):
-        """
-        Called in main thread periodically. Retrieves payloads and updates UI.
-        Payload can include:
-          - entries: list of detection dicts (car_id, plate_text, car_path, plate_path, face_path, ts)
-          - tracked_ids: list of currently tracked car ids
-          - previews: dict with keys 'car_rgb', 'plate_rgb', 'face_rgb' (numpy RGB arrays)
-        """
-        updated_preview = False
-        while not result_queue.empty():
-            payload = result_queue.get()
-            entries = payload.get("entries", [])
-            tracked_ids = set(payload.get("tracked_ids", []))
-            previews = payload.get("previews", {})
-
-            self.latest_entries = entries
-            self.latest_tracked_ids = tracked_ids
-
-            # Update history tree (unique plates)
-            self.update_treeview(entries)
-
-            # Update parking states based on tracked_ids
-            self.update_bai_states(tracked_ids, entries)
-
-            # Refresh bai Treeview
-            self.update_bai_tree()
-
-            # If previews present, update them (they are RGB numpy arrays)
-            if previews:
-                car_rgb = previews.get("car_rgb")
-                plate_rgb = previews.get("plate_rgb")
-                face_rgb = previews.get("face_rgb")
-                # schedule main-thread PhotoImage creation & widget update
-                self.root.after(0, self._update_previews_from_arrays, car_rgb, plate_rgb, face_rgb)
-                updated_preview = True
-
-        # repeat polling
-        self.root.after(80, self.process_queue)
-
-    def _update_previews_from_arrays(self, car_rgb, plate_rgb, face_rgb):
-        # create PhotoImage from numpy RGB arrays (main thread)
-        if car_rgb is not None:
-            im = Image.fromarray(car_rgb)
-            photo = ImageTk.PhotoImage(im)
-            self.preview_car.config(image=photo, text="")
-            self.preview_car.image = photo
-        # plate
-        if plate_rgb is not None:
-            im = Image.fromarray(plate_rgb)
-            photo = ImageTk.PhotoImage(im)
-            self.preview_plate.config(image=photo, text="")
-            self.preview_plate.image = photo
-        # face
-        if face_rgb is not None:
-            im = Image.fromarray(face_rgb)
-            photo = ImageTk.PhotoImage(im)
-            self.preview_face.config(image=photo, text="")
-            self.preview_face.image = photo
+        if not result_queue.empty():
+            self.latest_entries = result_queue.get()
+            self.update_treeview(self.latest_entries)
+        self.root.after(200, self.process_queue)
 
     def update_treeview(self, entries):
-        # Show unique plates in history (latest first)
         for item in self.tree.get_children():
             self.tree.delete(item)
         current_ids = set([e['car_id'] for e in entries])
         previous_ids = set(self.car_states.keys())
         new_ids = current_ids - previous_ids
-        # Insert entries (we show order same as entries list)
         for e in entries:
             tag = 'new_car' if e['car_id'] in new_ids else ''
             self.tree.insert('', tk.END, values=(e['car_id'], e['plate_text'] or '', e['ts']), tags=(tag,))
             self.car_states[e['car_id']] = 'present'
-        # mark lefts
         left_ids = previous_ids - current_ids
         for car_id in left_ids:
             self.car_states[car_id] = 'left'
-        # schedule removal of left cars from history tree (visual housekeeping)
         self.root.after(3000, self.remove_left_cars)
 
     def remove_left_cars(self):
-        # remove items that are marked 'left' in car_states
-        for item_id in list(self.tree.get_children()):
+        for item_id in self.tree.get_children():
             vals = self.tree.item(item_id, 'values')
-            if not vals:
-                continue
-            try:
-                car_id = int(vals[0])
-            except:
-                continue
+            car_id = int(vals[0])
             if self.car_states.get(car_id) == 'left':
                 self.tree.delete(item_id)
                 del self.car_states[car_id]
-
-    def update_bai_states(self, tracked_ids, entries):
-        """
-        tracked_ids: set of car_id currently tracked in frame
-        entries: list of dict with fields including car_id and plate_text and ts
-        """
-        # 1) New cars entering: tracked_ids - existing bai_states
-        new_in = tracked_ids - set(self.bai_states.keys())
-        plate_map = {e['car_id']: e for e in entries}
-        for car_id in new_in:
-            ts_in = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            plate_text = None
-            if car_id in plate_map:
-                plate_text = plate_map[car_id].get("plate_text")
-                ts_in = plate_map[car_id].get("ts") or ts_in
-            # add to in-memory state
-            self.bai_states[car_id] = ts_in
-            # persist to DB parking_status (insert or replace)
-            try:
-                db = sqlite3.connect(DB_PATH)
-                c = db.cursor()
-                c.execute("INSERT OR REPLACE INTO parking_status (car_id, plate, ts_in) VALUES (?, ?, ?)",
-                          (car_id, plate_text, ts_in))
-                db.commit()
-                db.close()
-            except Exception:
-                pass
-
-        # 2) Cars left: present in bai_states but not in tracked_ids
-        left = set(self.bai_states.keys()) - tracked_ids
-        for car_id in left:
-            try:
-                db = sqlite3.connect(DB_PATH)
-                c = db.cursor()
-                c.execute("DELETE FROM parking_status WHERE car_id=?", (car_id,))
-                db.commit()
-                db.close()
-            except Exception:
-                pass
-            if car_id in self.bai_states:
-                del self.bai_states[car_id]
-
-    def update_bai_tree(self):
-        # Refresh the tree_bai
-        for it in self.tree_bai.get_children():
-            self.tree_bai.delete(it)
-        for car_id in sorted(self.bai_states.keys()):
-            ts_in = self.bai_states[car_id]
-            plate = ""
-            for e in self.latest_entries:
-                if e['car_id'] == car_id:
-                    plate = e.get('plate_text') or ""
-                    break
-            self.tree_bai.insert('', tk.END, values=(car_id, plate, ts_in))
 
     # ---------------- Row selection preview ----------------
     def on_row_selected(self, event=None):
@@ -402,34 +195,11 @@ class App:
         idx = self.tree.index(sel[0])
         if idx < 0 or idx >= len(self.latest_entries): return
         item = self.latest_entries[idx]
-        self._show_previews_from_item(item)
 
-    def on_row_selected_bai(self, event=None):
-        sel = self.tree_bai.selection()
-        if not sel: return
-        vals = self.tree_bai.item(sel[0], 'values')
-        if not vals: return
-        car_id = int(vals[0])
-        item = None
-        for e in self.latest_entries:
-            if e['car_id'] == car_id:
-                item = e
-                break
-        if item:
-            self._show_previews_from_item(item)
-        else:
-            self.preview_car.config(image="", text="Không có ảnh xe")
-            self.preview_car.image = None
-            self.preview_plate.config(image="", text="Không có ảnh biển số")
-            self.preview_plate.image = None
-            self.preview_face.config(image="", text="Không có ảnh mặt")
-            self.preview_face.image = None
-
-    def _show_previews_from_item(self, item):
         # Car preview
         if item.get("car_path") and os.path.exists(item["car_path"]):
             im = Image.open(item["car_path"])
-            im.thumbnail((CAR_W, CAR_H))
+            im.thumbnail((400, 200))
             tkim = ImageTk.PhotoImage(im)
             self.preview_car.config(image=tkim, text="")
             self.preview_car.image = tkim
@@ -440,7 +210,7 @@ class App:
         # Plate preview
         if item.get("plate_path") and os.path.exists(item["plate_path"]):
             im = Image.open(item["plate_path"])
-            im.thumbnail((PLATE_W, PLATE_H))
+            im.thumbnail((400, 150))
             tkim = ImageTk.PhotoImage(im)
             self.preview_plate.config(image=tkim, text="")
             self.preview_plate.image = tkim
@@ -448,10 +218,10 @@ class App:
             self.preview_plate.config(image="", text="Không có ảnh biển số")
             self.preview_plate.image = None
 
-        # Face preview
+        # Face preview (if exists)
         if item.get("face_path") and os.path.exists(item["face_path"]):
             im = Image.open(item["face_path"])
-            im.thumbnail((FACE_W, FACE_H))
+            im.thumbnail((400, 150))
             tkim = ImageTk.PhotoImage(im)
             self.preview_face.config(image=tkim, text="")
             self.preview_face.image = tkim
@@ -459,11 +229,34 @@ class App:
             self.preview_face.config(image="", text="Không có ảnh mặt")
             self.preview_face.image = None
 
-    # ---------------- Video processing (worker thread) ----------------
+    # ---------------- Video processing ----------------
+    # ---------------- Video processing ----------------
     def video_loop(self):
-        # DB connection in worker thread for writes
         db = sqlite3.connect(DB_PATH)
         cur = db.cursor()
+        cur.execute("""
+                    CREATE TABLE IF NOT EXISTS plate_logs
+                    (
+                        id
+                        INTEGER
+                        PRIMARY
+                        KEY
+                        AUTOINCREMENT,
+                        car_id
+                        INTEGER,
+                        plate
+                        TEXT
+                        UNIQUE,
+                        car_path
+                        TEXT,
+                        plate_path
+                        TEXT,
+                        face_path
+                        TEXT,
+                        timestamp
+                        TEXT
+                    )
+                    """)
         db.commit()
 
         cap = self.cap
@@ -471,8 +264,7 @@ class App:
         try:
             while self.running:
                 ret, frame = cap.read()
-                if not ret:
-                    break
+                if not ret: break
 
                 # ---- Vehicle detection ----
                 veh_results = vehicle_model(frame)[0]
@@ -489,7 +281,6 @@ class App:
                 # ---- Tracking ----
                 tracks = tracker.update_tracks(detections, frame=frame)
                 tracked_cars = [(t.track_id, *map(int, t.to_ltrb())) for t in tracks if t.is_confirmed()]
-                tracked_ids = [t[0] for t in tracked_cars]
 
                 # ---- Plate detection ----
                 plate_results = plate_model(frame)[0]
@@ -533,31 +324,12 @@ class App:
 
                 # ---- Crop, OCR, save ----
                 frame_entries = []
-                # We'll also prepare a preview set: use the first matched car's car/plate/face crops for live preview
-                preview_car_crop = None
-                preview_plate_crop = None
-                preview_face_crop = None
-
                 for car_id, (px1, py1, px2, py2) in matches:
                     vb = next((v for v in tracked_cars if v[0] == car_id), None)
                     if vb is None: continue
                     _, vx1, vy1, vx2, vy2 = vb
-                    # clip coords to frame bounds
-                    h, w = frame.shape[:2]
-                    vx1, vy1 = max(0, vx1), max(0, vy1)
-                    vx2, vy2 = min(w - 1, vx2), min(h - 1, vy2)
-                    px1, py1, px2, py2 = max(0, px1), max(0, py1), min(w - 1, px2), min(h - 1, py2)
-
-                    if vx2 <= vx1 or vy2 <= vy1:
-                        continue
                     car_crop = frame[vy1:vy2, vx1:vx2].copy()
-                    plate_crop = frame[py1:py2, px1:px2].copy() if (px2 > px1 and py2 > py1) else None
-
-                    # set previews to first available crops (so UI shows something)
-                    if preview_car_crop is None:
-                        preview_car_crop = car_crop
-                    if preview_plate_crop is None and plate_crop is not None:
-                        preview_plate_crop = plate_crop
+                    plate_crop = frame[py1:py2, px1:px2].copy() if px2 > px1 and py2 > py1 else None
 
                     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                     car_path = os.path.join(SAVED_CARS, f"car_{car_id}_{ts}.jpg")
@@ -571,15 +343,13 @@ class App:
                         try:
                             plate_text_raw = ocr.run(cv2.cvtColor(plate_crop, cv2.COLOR_BGR2RGB))
                             plate_text = "".join(plate_text_raw) if isinstance(plate_text_raw, list) else plate_text_raw
-                            if plate_text:
-                                plate_text = plate_text.strip()
                         except:
                             plate_text = None
 
-                    # Face detection placeholder (not implemented)
+                    # Face detection placeholder
                     face_path = None
 
-                    # Save DB entry for unique plates (as before)
+                    # Save DB
                     try:
                         if plate_text:
                             cur.execute("SELECT plate FROM plate_logs WHERE plate=?", (plate_text,))
@@ -589,7 +359,7 @@ class App:
                                                VALUES (?, ?, ?, ?, ?, ?)""",
                                             (car_id, plate_text, car_path, plate_path, face_path, ts))
                                 db.commit()
-                    except Exception:
+                    except:
                         pass
 
                     if plate_text:
@@ -602,27 +372,22 @@ class App:
                         "car_path": car_path,
                         "plate_path": plate_path,
                         "face_path": face_path,
-                        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # human-friendly ts for UI
+                        "ts": ts
                     })
 
-                # Build preview rgb arrays (fit to canvases)
-                try:
-                    car_rgb = fit_image_to_canvas_bgr(preview_car_crop if preview_car_crop is not None else frame, CAR_W, CAR_H)
-                except Exception:
-                    car_rgb = fit_image_to_canvas_bgr(frame, CAR_W, CAR_H)
-                plate_rgb = fit_image_to_canvas_bgr(preview_plate_crop, PLATE_W, PLATE_H) if preview_plate_crop is not None else None
-                face_rgb = None  # placeholder if face crop available later
+                result_queue.put(frame_entries)
 
-                # Put payload to main thread queue
-                payload = {"entries": frame_entries, "tracked_ids": tracked_ids,
-                           "previews": {"car_rgb": car_rgb, "plate_rgb": plate_rgb, "face_rgb": face_rgb}}
-                try:
-                    result_queue.put(payload)
-                except:
-                    pass
+                # ---------------- Tkinter display ----------------
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(rgb_frame)
+                img = img.resize((800, 450))  # Resize nếu muốn
+                imgtk = ImageTk.PhotoImage(image=img)
+                self.video_frame.config(image=imgtk)  # Dùng label car làm video
+                self.video_frame.image = imgtk
 
-                # small sleep to yield (no cv2.waitKey in thread)
-                time.sleep(0.001)
+                # Delay tương đương cv2.waitKey
+                self.root.update_idletasks()
+                self.root.update()
 
         finally:
             try:
@@ -634,8 +399,9 @@ class App:
             except:
                 pass
             self.running = False
-            self.root.after(0, lambda: self.btn_open.config(state=tk.NORMAL))
-            self.root.after(0, lambda: self.btn_stop.config(state=tk.DISABLED))
+            self.btn_open.config(state=tk.NORMAL)
+            self.btn_stop.config(state=tk.DISABLED)
+
 
 # ---------------------------
 if __name__=="__main__":

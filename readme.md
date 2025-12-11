@@ -200,3 +200,57 @@ Frame có kích thước cố định, không bị thay đổi
 Ảnh/video bạn đưa vào sẽ được resize theo đúng khung
 
 GUI preview luôn đẹp, bố cục luôn ổn định
+
+✅ CẤU TRÚC MỚI (chuẩn và dễ bảo trì)
+project/
+│
+├── cam/
+│   ├── camera_manager.py        # vòng lặp camera + show video
+│   ├── plate_detector.py        # YOLO detect biển số
+│   ├── plate_ocr.py             # fast_plate_ocr xử lý OCR
+│   ├── tracker.py               # deep sort (nếu đang dùng)
+│   └── drawer.py                # vẽ bounding box, preview, overlay
+│
+├── services/
+│   ├── parking_service.py       # logic xử lý vào/ra, lưu kết quả
+│   └── image_service.py         # crop ảnh, resize, chuyển định dạng
+│
+├── gui/
+│   └── display.py               # UI hiển thị frame (nếu dùng Tkinter)
+│
+├── models/
+│   └── xe_model.py              # model Xe (nếu bạn có DB)
+│
+└── cam_baixe.py                 # file chính gọi các module
+
+Trong Tkinter, thuộc tính relief dùng để xác định kiểu viền (border style) của một widget, giúp tạo hiệu ứng nổi, lõm hay phẳng cho widget đó.
+
+Cụ thể, relief=tk.SUNKEN có nghĩa là widget sẽ có hiệu ứng "lõm vào", tức là trông như bị nhấn xuống so với bề mặt xung quanh.
+
+Các giá trị thường dùng của relief:
+
+Giá trị	Hiệu ứng
+flat	Không có viền, phẳng
+raised	Nổi lên, giống nút bấm
+sunken	Lõm xuống, giống vùng hiển thị đã được nhấn
+groove	Viền rãnh (groove)
+ridge	Viền nổi (ridge)
+solid	Viền đặc
+
+Ví dụ:
+
+import tkinter as tk
+
+root = tk.Tk()
+frame = tk.Frame(root, width=200, height=100, relief=tk.SUNKEN, borderwidth=2)
+frame.pack(padx=10, pady=10)
+root.mainloop()
+
+
+Kết quả: bạn sẽ thấy frame lõm xuống so với cửa sổ, nhìn giống một khung hiển thị.
+
+Trong code của bạn, relief=tk.SUNKEN được dùng cho Label preview xe, biển số, và mặt để tạo hiệu ứng khung hiển thị, giúp người dùng nhận biết vùng hiển thị nội dung.
+
+Nếu bạn muốn, mình có thể giải thích sự khác nhau giữa SUNKEN, RAISED và GROOVE trực quan bằng hình minh họa
+
+
