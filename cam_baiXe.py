@@ -70,6 +70,17 @@ class App:
         left_frame = tk.Frame(root, width=400)
         left_frame.pack(side=tk.LEFT, fill=tk.Y)
 
+        # Thêm vào __init__() ngay dưới phần left_frame
+        db_frame = tk.Frame(left_frame)
+        db_frame.pack(fill=tk.X, pady=6)
+        self.db_entry = tk.Entry(db_frame)
+        self.db_entry.pack(side=tk.LEFT, padx=2, fill=tk.X, expand=True)
+        self.btn_choose_db = tk.Button(db_frame, text="Chọn DB xe", command=self.choose_db)
+        self.btn_choose_db.pack(side=tk.LEFT, padx=2)
+
+        # ---------------- Internal DB state ----------------
+        self.vehicle_db_conn = None
+
         # Buttons
         btn_frame = tk.Frame(left_frame)
         btn_frame.pack(pady=6)
@@ -124,6 +135,94 @@ class App:
         # Poll queue
         self.root.after(200, self.process_queue)
 
+    # ---------------- Hàm chọn DB ----------------
+    def choose_db(self):
+        file = filedialog.askopenfilename(title="Chọn database Xe-Nguoi-DonVi",
+                                          filetypes=[("SQLite DB", "*.db"), ("All files", "*.*")])
+        if not file:
+            return
+        try:
+            if self.vehicle_db_conn:
+                self.vehicle_db_conn.close()
+            self.vehicle_db_conn = sqlite3.connect(file)
+            self.db_entry.delete(0, tk.END)
+            self.db_entry.insert(0, file)
+            messagebox.showinfo("Thông báo", f"Đã kết nối database: {file}")
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không mở được DB:\n{e}")
+            self.vehicle_db_conn = None
+
+    # ---------------- Cập nhật on_row_selected ----------------
+    def on_row_selected(self, event=None):
+        sel = self.tree.selection()
+        if not sel: return
+        idx = self.tree.index(sel[0])
+        if idx < 0 or idx >= len(self.latest_entries): return
+        item = self.latest_entries[idx]
+
+        # --- Hiển thị car, plate, face như trước ---
+        # Car preview
+        if item.get("car_path") and os.path.exists(item["car_path"]):
+            im = Image.open(item["car_path"])
+            im.thumbnail((400, 200))
+            tkim = ImageTk.PhotoImage(im)
+            self.preview_car.config(image=tkim, text="")
+            self.preview_car.image = tkim
+        else:
+            self.preview_car.config(image="", text="Không có ảnh xe")
+            self.preview_car.image = None
+
+        # Plate preview
+        if item.get("plate_path") and os.path.exists(item["plate_path"]):
+            im = Image.open(item["plate_path"])
+            im.thumbnail((400, 150))
+            tkim = ImageTk.PhotoImage(im)
+            self.preview_plate.config(image=tkim, text="")
+            self.preview_plate.image = tkim
+        else:
+            self.preview_plate.config(image="", text="Không có ảnh biển số")
+            self.preview_plate.image = None
+
+        # Face preview (nếu OCR có)
+        if item.get("face_path") and os.path.exists(item["face_path"]):
+            im = Image.open(item["face_path"])
+            im.thumbnail((400, 150))
+            tkim = ImageTk.PhotoImage(im)
+            self.preview_face.config(image=tkim, text="")
+            self.preview_face.image = tkim
+        else:
+            self.preview_face.config(image="", text="Không có ảnh mặt")
+            self.preview_face.image = None
+
+        # --- Tra cứu DB Xe-Nguoi-DonVi nếu có ---
+        if self.vehicle_db_conn and item.get("plate_text"):
+            plate_text = item["plate_text"]
+            c = self.vehicle_db_conn.cursor()
+            try:
+                c.execute("""
+                          SELECT Nguoi.ten, DonVi.ten, Nguoi.anh_mat
+                          FROM Xe
+                                   JOIN Nguoi ON Xe.nguoi_id = Nguoi.id
+                                   JOIN DonVi ON Nguoi.don_vi_id = DonVi.id
+                          WHERE Xe.bien_so = ?
+                          """, (plate_text,))
+                result = c.fetchone()
+                if result:
+                    nguoi_ten, don_vi_ten, anh_mat = result
+                    # Hiển thị tên và đơn vị lên Treeview hoặc label
+                    messagebox.showinfo("Thông tin xe",
+                                        f"Biển số: {plate_text}\nNgười sở hữu: {nguoi_ten}\nĐơn vị: {don_vi_ten}")
+                    # Nếu có ảnh mặt, hiển thị lên preview_face
+                    if anh_mat and os.path.exists(anh_mat):
+                        im = Image.open(anh_mat)
+                        im.thumbnail((200, 200))
+                        tkim = ImageTk.PhotoImage(im)
+                        self.preview_face.config(image=tkim, text="")
+                        self.preview_face.image = tkim
+                else:
+                    print(f"Không tìm thấy thông tin cho biển số {plate_text}")
+            except Exception as e:
+                print("Lỗi tra cứu DB:", e)
     # ---------------- Video controls ----------------
     def select_and_start(self):
         path = filedialog.askopenfilename(title="Chọn video (hoặc hủy để dùng camera)",
@@ -189,45 +288,45 @@ class App:
                 del self.car_states[car_id]
 
     # ---------------- Row selection preview ----------------
-    def on_row_selected(self, event=None):
-        sel = self.tree.selection()
-        if not sel: return
-        idx = self.tree.index(sel[0])
-        if idx < 0 or idx >= len(self.latest_entries): return
-        item = self.latest_entries[idx]
-
-        # Car preview
-        if item.get("car_path") and os.path.exists(item["car_path"]):
-            im = Image.open(item["car_path"])
-            im.thumbnail((400, 200))
-            tkim = ImageTk.PhotoImage(im)
-            self.preview_car.config(image=tkim, text="")
-            self.preview_car.image = tkim
-        else:
-            self.preview_car.config(image="", text="Không có ảnh xe")
-            self.preview_car.image = None
-
-        # Plate preview
-        if item.get("plate_path") and os.path.exists(item["plate_path"]):
-            im = Image.open(item["plate_path"])
-            im.thumbnail((400, 150))
-            tkim = ImageTk.PhotoImage(im)
-            self.preview_plate.config(image=tkim, text="")
-            self.preview_plate.image = tkim
-        else:
-            self.preview_plate.config(image="", text="Không có ảnh biển số")
-            self.preview_plate.image = None
-
-        # Face preview (if exists)
-        if item.get("face_path") and os.path.exists(item["face_path"]):
-            im = Image.open(item["face_path"])
-            im.thumbnail((400, 150))
-            tkim = ImageTk.PhotoImage(im)
-            self.preview_face.config(image=tkim, text="")
-            self.preview_face.image = tkim
-        else:
-            self.preview_face.config(image="", text="Không có ảnh mặt")
-            self.preview_face.image = None
+    # def on_row_selected(self, event=None):
+    #     sel = self.tree.selection()
+    #     if not sel: return
+    #     idx = self.tree.index(sel[0])
+    #     if idx < 0 or idx >= len(self.latest_entries): return
+    #     item = self.latest_entries[idx]
+    #
+    #     # Car preview
+    #     if item.get("car_path") and os.path.exists(item["car_path"]):
+    #         im = Image.open(item["car_path"])
+    #         im.thumbnail((400, 200))
+    #         tkim = ImageTk.PhotoImage(im)
+    #         self.preview_car.config(image=tkim, text="")
+    #         self.preview_car.image = tkim
+    #     else:
+    #         self.preview_car.config(image="", text="Không có ảnh xe")
+    #         self.preview_car.image = None
+    #
+    #     # Plate preview
+    #     if item.get("plate_path") and os.path.exists(item["plate_path"]):
+    #         im = Image.open(item["plate_path"])
+    #         im.thumbnail((400, 150))
+    #         tkim = ImageTk.PhotoImage(im)
+    #         self.preview_plate.config(image=tkim, text="")
+    #         self.preview_plate.image = tkim
+    #     else:
+    #         self.preview_plate.config(image="", text="Không có ảnh biển số")
+    #         self.preview_plate.image = None
+    #
+    #     # Face preview (if exists)
+    #     if item.get("face_path") and os.path.exists(item["face_path"]):
+    #         im = Image.open(item["face_path"])
+    #         im.thumbnail((400, 150))
+    #         tkim = ImageTk.PhotoImage(im)
+    #         self.preview_face.config(image=tkim, text="")
+    #         self.preview_face.image = tkim
+    #     else:
+    #         self.preview_face.config(image="", text="Không có ảnh mặt")
+    #         self.preview_face.image = None
 
     # ---------------- Video processing ----------------
     # ---------------- Video processing ----------------
