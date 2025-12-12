@@ -11,6 +11,7 @@ from ultralytics import YOLO
 from deep_sort_realtime.deepsort_tracker import DeepSort
 from fast_plate_ocr import LicensePlateRecognizer
 from PIL import Image, ImageTk
+import time
 
 # ---------------------------
 # Config
@@ -63,6 +64,9 @@ def centroid(box):
 class App:
     def __init__(self, root):
         self.root = root
+
+        self.paused = False
+
         root.title("Vehicle + Plate OCR")
         root.geometry("1400x700")
 
@@ -88,6 +92,8 @@ class App:
         self.btn_open.pack(side=tk.LEFT, padx=6)
         self.btn_stop = tk.Button(btn_frame, text="Dừng", command=self.stop_video, state=tk.DISABLED)
         self.btn_stop.pack(side=tk.LEFT, padx=6)
+        self.btn_pause = tk.Button(btn_frame, text="Pause", command=self.toggle_pause, state=tk.NORMAL)
+        self.btn_pause.pack(side=tk.LEFT, padx=6)
 
         # Treeview
         columns = ("car_id", "plate", "time")
@@ -134,6 +140,12 @@ class App:
 
         # Poll queue
         self.root.after(200, self.process_queue)
+
+    def toggle_pause(self):
+        if not self.running:
+            return
+        self.paused = not self.paused
+        self.btn_pause.config(text="Play" if self.paused else "Pause")
 
     # ---------------- Hàm chọn DB ----------------
     def choose_db(self):
@@ -362,6 +374,11 @@ class App:
 
         try:
             while self.running:
+                if self.paused:
+                    # Chỉ sleep một chút, giữ frame hiện tại
+                    time.sleep(0.05)
+                    continue
+
                 ret, frame = cap.read()
                 if not ret: break
 
