@@ -64,6 +64,8 @@ def centroid(box):
 class App:
     def __init__(self, root):
         self.root = root
+        self.detect_db = sqlite3.connect(DB_PATH)
+        self.init_detected_logs_table()
 
         self.paused = False
 
@@ -94,6 +96,10 @@ class App:
         self.btn_stop.pack(side=tk.LEFT, padx=6)
         self.btn_pause = tk.Button(btn_frame, text="Pause", command=self.toggle_pause, state=tk.NORMAL)
         self.btn_pause.pack(side=tk.LEFT, padx=6)
+
+        self.btn_save = tk.Button(btn_frame, text="Lưu dữ liệu", command=self.save_paused_data)
+        self.btn_save.pack(side=tk.LEFT, padx=6)
+        self.btn_save.pack_forget()
 
         # Treeview
         columns = ("car_id", "plate", "time")
@@ -144,8 +150,14 @@ class App:
     def toggle_pause(self):
         if not self.running:
             return
+
         self.paused = not self.paused
         self.btn_pause.config(text="Play" if self.paused else "Pause")
+
+        if self.paused:
+            self.btn_save.pack(side=tk.LEFT, padx=6)
+        else:
+            self.btn_save.pack_forget()
 
     # ---------------- Hàm chọn DB ----------------
     def choose_db(self):
@@ -163,6 +175,67 @@ class App:
         except Exception as e:
             messagebox.showerror("Lỗi", f"Không mở được DB:\n{e}")
             self.vehicle_db_conn = None
+
+    def save_paused_data(self):
+        if not self.paused:
+            messagebox.showwarning("Thông báo", "Hãy Pause trước khi lưu.")
+            return
+
+        if not self.latest_entries:
+            messagebox.showinfo("Thông báo", "Không có dữ liệu để lưu.")
+            return
+
+        try:
+            c = self.detect_db.cursor()
+
+            for item in self.latest_entries:
+                c.execute("""
+                          INSERT INTO detected_logs
+                              (car_id, plate, car_path, plate_path, face_path, timestamp)
+                          VALUES (?, ?, ?, ?, ?, ?)
+                          """, (
+                              item.get("car_id"),
+                              item.get("plate_text"),
+                              item.get("car_path"),
+                              item.get("plate_path"),
+                              item.get("face_path"),
+                              item.get("ts")
+                          ))
+
+            self.detect_db.commit()
+            messagebox.showinfo("Thành công", "Đã lưu dữ liệu vào plates.db!")
+
+        except Exception as e:
+            messagebox.showerror("Lỗi", str(e))
+
+    def init_detected_logs_table(self):
+        try:
+            c = self.detect_db.cursor()
+            c.execute("""
+                      CREATE TABLE IF NOT EXISTS detected_logs
+                      (
+                          id
+                          INTEGER
+                          PRIMARY
+                          KEY
+                          AUTOINCREMENT,
+                          car_id
+                          INTEGER,
+                          plate
+                          TEXT,
+                          car_path
+                          TEXT,
+                          plate_path
+                          TEXT,
+                          face_path
+                          TEXT,
+                          timestamp
+                          TEXT
+                      )
+                      """)
+            self.detect_db.commit()
+        except Exception as e:
+            print("Lỗi tạo bảng detected_logs:", e)
 
     # ---------------- Cập nhật on_row_selected ----------------
     def on_row_selected(self, event=None):
